@@ -25,7 +25,7 @@ with open("./data/minesweeper_dataset.csv", mode="r", encoding="utf-8") as file:
                     if int(row["safe"]) == 1:
                         print("S", end=" ")
                     else:
-                        print("B", end=" ")
+                        print("M", end=" ")
             print()
         print()
         if i == 1000:

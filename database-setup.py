@@ -152,5 +152,7 @@ if not all([username, password, schema]):
 success, error = login.login(username, password, schema)
 if success:
     createDatasetTable()
+    createModelsTable()
+    createModelStatisticsTable()
 else:
     print(f"Login failed: {error}")

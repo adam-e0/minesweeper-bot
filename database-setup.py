@@ -85,6 +85,66 @@ def createDatasetTable():
         return None, str(e)
 
 
+def createModelsTable():
+    db = login.db()
+    try:
+        columns = (
+            "model_steps_trained INT NOT NULL PRIMARY KEY, "
+            "model_size INT NOT NULL, "
+            "dataset_start_index INT, "
+            "dataset_end_index INT"
+        )
+
+        createTableQuery = f"CREATE TABLE IF NOT EXISTS {schema}.models ({columns});"
+
+        print(createTableQuery)
+
+        if db is None:
+            return "Error: Database connection is not established.", None
+        with db.cursor() as c:
+            c.execute(createTableQuery)
+            db.commit()
+            return f"Successfully created table '{schema}.models'.", None
+
+    except BaseException as e:
+        if db is not None:
+            db.rollback()
+        return None, str(e)
+
+
+def createModelStatisticsTable():
+    db = login.db()
+    try:
+        columns = (
+            "model_steps_trained INT NOT NULL, "
+            "games_played INT, "
+            "games_won INT, "
+            "total_guesses INT, "
+            "correct_guesses INT, "
+            "PRIMARY KEY (model_steps_trained), "
+            "FOREIGN KEY (model_steps_trained) REFERENCES "
+            f"{schema}.models(model_steps_trained)"
+        )
+
+        createTableQuery = (
+            f"CREATE TABLE IF NOT EXISTS {schema}.model_statistics ({columns});"
+        )
+
+        print(createTableQuery)
+
+        if db is None:
+            return "Error: Database connection is not established.", None
+        with db.cursor() as c:
+            c.execute(createTableQuery)
+            db.commit()
+            return f"Successfully created table '{schema}.model_statistics'.", None
+
+    except BaseException as e:
+        if db is not None:
+            db.rollback()
+        return None, str(e)
+
+
 if not all([username, password, schema]):
     print("Error: DB_USERNAME, DB_PASSWORD, or DB_SCHEMA environment variable not set.")
     exit(1)

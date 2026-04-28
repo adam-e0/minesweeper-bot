@@ -74,6 +74,10 @@ def createDatasetTable():
                 for values in rows:
                     c.execute(insertQuery, values)
                     count += 1
+                    if count % 500 == 0:
+                        print(
+                            f"Successfully inserted {count}/{len(rows)} rows ({count / len(rows) * 100}%) into '{tableName}'."
+                        )
                 db.commit()
                 return f"Successfully inserted {count} rows into '{tableName}'.", None
         else:

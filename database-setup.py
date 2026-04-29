@@ -74,10 +74,74 @@ def createDatasetTable():
                 for values in rows:
                     c.execute(insertQuery, values)
                     count += 1
+                    if count % 500 == 0:
+                        print(
+                            f"Successfully inserted {count}/{len(rows)} rows ({count / len(rows) * 100}%) into '{tableName}'."
+                        )
                 db.commit()
                 return f"Successfully inserted {count} rows into '{tableName}'.", None
         else:
             return "Error: Database connection is not established.", None
+
+    except BaseException as e:
+        if db is not None:
+            db.rollback()
+        return None, str(e)
+
+
+def createModelsTable():
+    db = login.db()
+    try:
+        columns = (
+            "model_steps_trained INT NOT NULL PRIMARY KEY, "
+            "model_size INT NOT NULL, "
+            "dataset_start_index INT, "
+            "dataset_end_index INT"
+        )
+
+        createTableQuery = f"CREATE TABLE IF NOT EXISTS {schema}.models ({columns});"
+
+        print(createTableQuery)
+
+        if db is None:
+            return "Error: Database connection is not established.", None
+        with db.cursor() as c:
+            c.execute(createTableQuery)
+            db.commit()
+            return f"Successfully created table '{schema}.models'.", None
+
+    except BaseException as e:
+        if db is not None:
+            db.rollback()
+        return None, str(e)
+
+
+def createModelStatisticsTable():
+    db = login.db()
+    try:
+        columns = (
+            "model_steps_trained INT NOT NULL, "
+            "games_played INT, "
+            "games_won INT, "
+            "total_guesses INT, "
+            "correct_guesses INT, "
+            "PRIMARY KEY (model_steps_trained), "
+            "FOREIGN KEY (model_steps_trained) REFERENCES "
+            f"{schema}.models(model_steps_trained)"
+        )
+
+        createTableQuery = (
+            f"CREATE TABLE IF NOT EXISTS {schema}.model_statistics ({columns});"
+        )
+
+        print(createTableQuery)
+
+        if db is None:
+            return "Error: Database connection is not established.", None
+        with db.cursor() as c:
+            c.execute(createTableQuery)
+            db.commit()
+            return f"Successfully created table '{schema}.model_statistics'.", None
 
     except BaseException as e:
         if db is not None:
@@ -92,5 +156,7 @@ if not all([username, password, schema]):
 success, error = login.login(username, password, schema)
 if success:
     createDatasetTable()
+    createModelsTable()
+    createModelStatisticsTable()
 else:
     print(f"Login failed: {error}")

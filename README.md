@@ -6,7 +6,7 @@ Dataset : https://www.kaggle.com/datasets/michelechierchia/dataset-minesweeper-g
 
 Place `minesweeper_dataset.csv` in `/data/`
 
-Create a .env file with the following vars:
+Create a .env file with the following variables:
 
 ```
 DB_USERNAME=username

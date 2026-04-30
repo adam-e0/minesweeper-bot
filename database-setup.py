@@ -93,10 +93,10 @@ def createModelsTable():
     db = login.db()
     try:
         columns = (
-            "model_steps_trained INT NOT NULL PRIMARY KEY, "
-            "model_size INT NOT NULL, "
-            "dataset_start_index INT, "
-            "dataset_end_index INT"
+            "model_name TEXT NOT NULL PRIMARY KEY, "
+            "steps_trained INT NOT NULL, "
+            "rows_trained INT, "
+            "trained_accuracy FLOAT"
         )
 
         createTableQuery = f"CREATE TABLE IF NOT EXISTS {schema}.models ({columns});"
@@ -120,14 +120,13 @@ def createModelStatisticsTable():
     db = login.db()
     try:
         columns = (
-            "model_steps_trained INT NOT NULL, "
+            "model_name TEXT NOT NULL, "
             "games_played INT, "
             "games_won INT, "
             "total_guesses INT, "
             "correct_guesses INT, "
-            "PRIMARY KEY (model_steps_trained), "
-            "FOREIGN KEY (model_steps_trained) REFERENCES "
-            f"{schema}.models(model_steps_trained)"
+            "FOREIGN KEY (model_name) REFERENCES "
+            f"{schema}.models(model_name)"
         )
 
         createTableQuery = (
@@ -155,7 +154,7 @@ if not all([username, password, schema]):
 
 success, error = login.login(username, password, schema)
 if success:
-    createDatasetTable()
+    # createDatasetTable()
     createModelsTable()
     createModelStatisticsTable()
 else:

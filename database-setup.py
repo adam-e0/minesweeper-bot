@@ -154,7 +154,7 @@ if not all([username, password, schema]):
 
 success, error = login.login(username, password, schema)
 if success:
-    # createDatasetTable()
+    createDatasetTable()
     createModelsTable()
     createModelStatisticsTable()
 else:

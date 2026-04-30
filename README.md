@@ -17,4 +17,14 @@ DB_NAME=dbname
 DB_SCHEMA=dbschema
 ```
 
-Run `database-setup.py`
+Run `database-setup.py` to setup the database tables.
+
+```
+python3 database-setup.py
+```
+
+Run `train-model.py` to train model.
+
+```
+python3 train-model.py
+```

@@ -131,7 +131,7 @@ def trainModels():
     device = torch.device("cpu")
     if torch.backends.mps.is_available():
         device = torch.device("mps")
-    elif torch.backends.cuda.is_available():
+    elif torch.cuda.is_available():
         device = torch.device("cuda")
     print(f"Total dataset size: {totalRows} rows. Training on {device}.\n")
 

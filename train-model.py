@@ -20,6 +20,12 @@ if not all(
 def createMinesweeperDataset():
     # Load the SQL data and return the grid features, density, and targets
     schema = os.getenv("DB_SCHEMA")
+    success, error = login.login(
+        os.getenv("DB_USERNAME"), os.getenv("DB_PASSWORD"), schema
+    )
+    if not success:
+        print(f"Login failed: {error}")
+        exit(1)
     db = login.db()
     if db is None:
         raise Exception("Database connection is None!")

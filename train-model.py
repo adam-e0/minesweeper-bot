@@ -10,18 +10,10 @@ from dotenv import load_dotenv
 import login
 
 load_dotenv()
-
-username = os.getenv("DB_USERNAME")
-password = os.getenv("DB_PASSWORD")
-schema = os.getenv("DB_SCHEMA")
-
-if not all([username, password, schema]):
+if not all(
+    [os.getenv("DB_USERNAME"), os.getenv("DB_PASSWORD"), os.getenv("DB_SCHEMA")]
+):
     print("Error: DB_USERNAME, DB_PASSWORD, or DB_SCHEMA environment variable not set.")
-    exit(1)
-
-success, error = login.login(username, password, schema)
-if not success:
-    print(f"Login failed: {error}")
     exit(1)
 
 
@@ -64,6 +56,12 @@ def createMinesweeperDataset():
 
 def addModelToDB(model_name, steps_trained, rows_trained, trained_accuracy):
     schema = os.getenv("DB_SCHEMA")
+    success, error = login.login(
+        os.getenv("DB_USERNAME"), os.getenv("DB_PASSWORD"), schema
+    )
+    if not success:
+        print(f"Login failed: {error}")
+        exit(1)
     db = login.db()
     if db is None:
         print("ERROR: Database connection is None!")

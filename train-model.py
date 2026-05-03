@@ -17,7 +17,7 @@ if not all(
     exit(1)
 
 
-def createMinesweeperDataset():
+def createMinesweeperDataset(limit):
     # Load the SQL data and return the grid features, density, and targets
     schema = os.getenv("DB_SCHEMA")
     success, error = login.login(
@@ -31,6 +31,8 @@ def createMinesweeperDataset():
         raise Exception("Database connection is None!")
     try:
         query = f"SELECT * FROM {schema}.minesweeper_dataset;"
+        if limit > 0:
+            query = f"SELECT * FROM {schema}.minesweeper_dataset LIMIT {limit};"
         with db.cursor() as c:
             c.execute(query)
             rows = c.fetchall()
@@ -109,8 +111,22 @@ def addModelToDB(model_name, steps_trained, rows_trained, trained_accuracy):
 
 def trainModels():
     try:
+        limit = int(
+            input(
+                "Enter the max number of rows of data to train the model(s) on (0 will use all rows): "
+            )
+        )
+        if limit < 0:
+            raise ValueError
+    except ValueError:
+        print("Please enter a valid positive integer.")
+        return
+
+    try:
         numIntervals = int(
-            input("Enter the number of intervals to divide the dataset into: ")
+            input(
+                "Enter the number of intervals to divide the dataset into (1 will train the full dataset on 1 model): "
+            )
         )
         if numIntervals <= 0:
             raise ValueError
@@ -127,7 +143,7 @@ def trainModels():
         return
 
     print("Loading full dataset from SQL table")
-    gridFeatures, globalDensity, targets = createMinesweeperDataset()
+    gridFeatures, globalDensity, targets = createMinesweeperDataset(limit)
     totalRows = len(gridFeatures)
 
     os.makedirs("models", exist_ok=True)
@@ -229,7 +245,7 @@ def trainModels():
             epochAcc = (correctPreds / totalSamples) * 100
 
             print(
-                f"\nEpoch {i + 1}/{epochs}:\nLoss: {epochLoss:.4f}\nAccuracy: {epochAcc:.2f}%"
+                f"\nEpoch {i + 1}/{epochs}:\nLoss: {epochLoss}\nAccuracy: {epochAcc}%"
             )
 
         modelName = f"model-{currentRowCount}rows-{i + 1}steps.pth"

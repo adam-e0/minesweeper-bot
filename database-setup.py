@@ -74,7 +74,7 @@ def createDatasetTable():
                 for values in rows:
                     c.execute(insertQuery, values)
                     count += 1
-                    if count % 500 == 0:
+                    if count % 1000 == 0:
                         print(
                             f"Successfully inserted {count}/{len(rows)} rows ({count / len(rows) * 100}%) into '{tableName}'."
                         )
@@ -93,10 +93,10 @@ def createModelsTable():
     db = login.db()
     try:
         columns = (
-            "model_steps_trained INT NOT NULL PRIMARY KEY, "
-            "model_size INT NOT NULL, "
-            "dataset_start_index INT, "
-            "dataset_end_index INT"
+            "model_name TEXT NOT NULL PRIMARY KEY, "
+            "steps_trained INT NOT NULL, "
+            "rows_trained INT, "
+            "trained_accuracy FLOAT"
         )
 
         createTableQuery = f"CREATE TABLE IF NOT EXISTS {schema}.models ({columns});"
@@ -120,14 +120,13 @@ def createModelStatisticsTable():
     db = login.db()
     try:
         columns = (
-            "model_steps_trained INT NOT NULL, "
+            "model_name TEXT NOT NULL, "
             "games_played INT, "
             "games_won INT, "
             "total_guesses INT, "
             "correct_guesses INT, "
-            "PRIMARY KEY (model_steps_trained), "
-            "FOREIGN KEY (model_steps_trained) REFERENCES "
-            f"{schema}.models(model_steps_trained)"
+            "FOREIGN KEY (model_name) REFERENCES "
+            f"{schema}.models(model_name)"
         )
 
         createTableQuery = (

@@ -56,12 +56,13 @@ def save_game_stats(model_name, won, total_guesses, correct_guesses):
                 UPDATE {schema}.model_statistics
                 SET games_played    = games_played    + 1,
                     games_won       = games_won       + %s,
-                    total_guesses   = total_guesses   + %s,
+                    total_guesses   = total_guesses +  %s,
                     correct_guesses = correct_guesses + %s
                 WHERE model_name = %s;
                 """
             with db.cursor() as c:
                 c.execute(update_q, (int(won), total_guesses, correct_guesses, model_name))
+                print(int(won), total_guesses, correct_guesses, model_name)
         else:
             #make a new row if its a new model
             insert_q = f"""
@@ -78,7 +79,7 @@ def save_game_stats(model_name, won, total_guesses, correct_guesses):
 
 #size and #of mines presets
 PRESETS = {
-    "Beginner":     (9,  9,  10),
+    "Beginner":     (5,  5,  5),
     "Intermediate": (16, 16, 40),
     "Expert":       (16, 30, 99),
 }
@@ -281,7 +282,7 @@ class Game:
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Minesweeper + AI Confidence")
+        self.title("Minesweeper")
         self.resizable(False, False)
 
         self.preset     = tk.StringVar(value="Intermediate")
@@ -409,12 +410,6 @@ class App(tk.Tk):
         if g.over or g.flagged[r][c] or g.shown[r][c]:
             return
 
-        #count as a guess only when there is no revealed neighbor
-        if not has_revealed_neighbor(g, r, c):
-            self._total_guesses += 1
-            if not g.mines[r][c]:
-                self._correct_guesses += 1
-
         g.reveal(r, c)
         self._run_inference_and_redraw()
         if g.over:
@@ -455,7 +450,7 @@ class App(tk.Tk):
                     b.config(text="F", bg=CELL_BG,
                              fg="#E53935", relief=tk.RAISED)
                 else:
-                    # Unrevealed — apply confidence color if overlay is on
+                    #unrevealed — apply confidence color if overlay is on
                     bg = CELL_BG
                     if (self.show_conf.get()
                             and self.conf_grid is not None
@@ -492,10 +487,10 @@ class App(tk.Tk):
 
         #if game is already over, save stats and restart
         if g.over:
-            self._end()
+            self._end_autoplay()
             if self._autoplay:
                 self.new_game()
-                self._autoplay_after = self.after(300, self._autoplay_step)
+                self._autoplay_after = self.after(10, self._autoplay_step)
             return
 
         #on the very first move, click the center cell to open things up
@@ -503,7 +498,7 @@ class App(tk.Tk):
             cr, cc = g.rows // 2, g.cols // 2
             g.reveal(cr, cc)
             self._run_inference_and_redraw()
-            self._autoplay_after = self.after(50, self._autoplay_step)
+            self._autoplay_after = self.after(10, self._autoplay_step)
             return
 
         #run inference to get confidence grid
@@ -523,27 +518,13 @@ class App(tk.Tk):
                     if conf_grid[r][c] > best_p:
                         best_p = conf_grid[r][c]
                         best_r, best_c = r, c
+                        self._total_guesses += 1
+                        self._correct_guesses += 1
 
-        if best_r is None:
-            #no adjacent cells scored — pick a random unrevealed cell
-            candidates = [
-                (r, c) for r in range(g.rows) for c in range(g.cols)
-                if not g.shown[r][c] and not g.flagged[r][c]
-            ]
-            if not candidates:
-                self._autoplay_after = self.after(50, self._autoplay_step)
-                return
-            best_r, best_c = random.choice(candidates)
-            #count random fallback as a guess
-            self._total_guesses += 1
-            if not g.mines[best_r][best_c]:
-                self._correct_guesses += 1
-        else:
-            #count as a guess only when there is no revealed neighbor
-            if not has_revealed_neighbor(g, best_r, best_c):
-                self._total_guesses += 1
-                if not g.mines[best_r][best_c]:
-                    self._correct_guesses += 1
+        # if not has_revealed_neighbor(g, best_r, best_c):
+        #     self._total_guesses += 1
+        #     if not g.mines[best_r][best_c]:
+        #         self._correct_guesses += 1
 
         g.reveal(best_r, best_c)
         self._run_inference_and_redraw()
@@ -552,7 +533,7 @@ class App(tk.Tk):
             self._end_autoplay()
             return
 
-        self._autoplay_after = self.after(50, self._autoplay_step)
+        self._autoplay_after = self.after(10, self._autoplay_step)
 
     #same as _end but skips the message and just restarts
     def _end_autoplay(self):
@@ -566,20 +547,21 @@ class App(tk.Tk):
         self.conf_grid = None
         self._redraw()
 
+        if (not g.won):
+            self._correct_guesses -= 1
+
         #save stats using whichever model is currently active
         if self.models:
             model_name = self.models[self.model_idx][0]
-            save_game_stats(model_name, won=g.won,
-                            total_guesses=self._total_guesses,
-                            correct_guesses=self._correct_guesses)
+            save_game_stats(model_name, won=g.won, total_guesses=self._total_guesses, correct_guesses=self._correct_guesses)
 
         # pause briefly so you can see the outcome, then restart
-        self._autoplay_after = self.after(600, self._autoplay_restart)
+        self._autoplay_after = self.after(10, self._autoplay_restart)
 
     def _autoplay_restart(self):
         if self._autoplay:
             self.new_game()
-            self._autoplay_after = self.after(300, self._autoplay_step)
+            self._autoplay_after = self.after(10, self._autoplay_step)
 
     def _end(self):
         g = self.game
@@ -591,11 +573,6 @@ class App(tk.Tk):
                     g.shown[r][c] = True
         self.conf_grid = None
         self._redraw()
-
-        #save stats using whichever model is currently active
-        if self.models:
-            model_name = self.models[self.model_idx][0]
-            save_game_stats( model_name, won = g.won, total_guesses = self._total_guesses, correct_guesses = self._correct_guesses,)
 
         if g.won:
             messagebox.showinfo("Minesweeper", "Win!")

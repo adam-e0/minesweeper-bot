@@ -1,9 +1,81 @@
 import math
+import os
 import random
 
 import numpy as np
 import torch
 import torch.nn.functional as F
+from dotenv import load_dotenv
+
+import login
+
+load_dotenv()
+if not all(
+    [os.getenv("DB_USERNAME"), os.getenv("DB_PASSWORD"), os.getenv("DB_SCHEMA")]
+):
+    print("Error: DB_USERNAME, DB_PASSWORD, or DB_SCHEMA environment variable not set.")
+    exit(1)
+
+
+def updateModelStats(
+    model_name, games_played, games_won, total_guesses, correct_guesses
+):
+    schema = os.getenv("DB_SCHEMA")
+    success, error = login.login(
+        os.getenv("DB_USERNAME"), os.getenv("DB_PASSWORD"), schema
+    )
+    if not success:
+        print(f"Login failed: {error}")
+        exit(1)
+    db = login.db()
+    if db is None:
+        print("ERROR: Database connection is None!")
+        return
+    try:
+        # First, check if the model already exists
+        checkQuery = f"SELECT 1 FROM {schema}.model_statistics WHERE model_name = %s;"
+
+        with db.cursor() as c:
+            c.execute(checkQuery, (model_name,))
+            result = c.fetchone()
+            exists = result is not None
+
+        if exists:
+            # Update existing row
+            updateQuery = f"UPDATE {schema}.model_statistics SET games_played = games_played + %s, games_won = games_won + %s, total_guesses = total_guesses + %s, correct_guesses = correct_guesses + %s WHERE model_name = %s;"
+            with db.cursor() as c:
+                c.execute(
+                    updateQuery,
+                    (
+                        games_played,
+                        games_won,
+                        total_guesses,
+                        correct_guesses,
+                        model_name,
+                    ),
+                )
+            print(f"Updated {model_name} in the model_statistics database table")
+        else:
+            # Insert new row
+            insertQuery = f"INSERT INTO {schema}.model_statistics (model_name, games_played, games_won, total_guesses, correct_guesses) VALUES (%s, %s, %s, %s, %s);"
+            with db.cursor() as c:
+                c.execute(
+                    insertQuery,
+                    (
+                        model_name,
+                        games_played,
+                        games_won,
+                        total_guesses,
+                        correct_guesses,
+                    ),
+                )
+            print(f"Added {model_name} to the model_statistics database table")
+
+        db.commit()
+    except BaseException as e:
+        if db is not None:
+            db.rollback()
+        print(f"Error adding model to database: {e}")
 
 
 def predictCell(model, grid, globalDensity, device):
@@ -117,6 +189,8 @@ def getGlobalDensity(mines, hidden):
     h = 0
     for cell in hidden:
         h += cell
+    if m == 0:
+        return -1
     if h == 0:
         return 0
     return m / h
@@ -199,7 +273,7 @@ def updateHidden(i, mines, mineCount, hidden, width):
     return hidden
 
 
-# Initialize model
+# Initialize device
 device = torch.device("cpu")
 if torch.backends.mps.is_available():
     device = torch.device("mps")
@@ -236,56 +310,137 @@ class MinesweeperModel(torch.nn.Module):
         return predictions
 
 
-# predict_cell(model, getGrid(i, mineCount, hidden, width), globalDensity, device)
-model = MinesweeperModel().load(
-    torch.load("models/model-1363793rows-200steps.pth", map_location=device), device
-)
+models = os.listdir("models/")
+print("All models:")
+for model in models:
+    if model.split(".").pop() != "pth":
+        models.pop(models.index(model))
+for i in range(len(models)):
+    print(f"{i}: {models[i]}")
 
-won = False
-while not won:
-    # Initialize game
-    gameSize = random.randint(5, 30)
-    print(f"Starting new {gameSize}x{gameSize} game.")
-    mines, mineCount, hidden = setupGame(gameSize)
-    # Choose random cell to select that isnt a mine
-    r = -1
-    while r == -1 or mines[r] == 1:
-        r = random.randint(0, gameSize**2 - 1)
-    hidden = updateHidden(r, mines, mineCount, hidden, gameSize)
-    # Game loop
-    guesses = 0
+modelsToBench = {}
+try:
+    modelsInput = input(
+        "Select which models to benchmark using a comma seperated list of their indicies (-1 will select them all): "
+    ).strip()
+    if len(modelsInput) == 0:
+        raise ValueError
 
-    while True:
-        predictions = {-1: 0.0}
-        bestPrediction = -1
-        gDensity = getGlobalDensity(mines, hidden)
-        if int(gDensity) == 1:
-            print("\nGame Won!")
-            printGame(mines, mineCount, hidden, gameSize, predictions, -1)
-            won = True
-            break
-        for i in range(gameSize**2):
-            grid = getGrid(i, mineCount, hidden, gameSize)
-            validGrid = False
-            for g in grid:
-                if g >= 0:
-                    validGrid = True
-                    break
-            if hidden[i] == 1 and validGrid:
-                p = predictCell(model, grid, gDensity, device)
-                predictions[i] = p
-                if p > predictions[bestPrediction]:
-                    bestPrediction = i
-        guesses += 1
-        print(f"Current game state (guess {guesses}):")
-        print(
-            f"Selecting Cell ({bestPrediction % gameSize}, {bestPrediction // gameSize}) with a prediction score of {predictions[bestPrediction]}"
-        )
-        printGame(mines, mineCount, hidden, gameSize, predictions, bestPrediction)
-        hidden = updateHidden(bestPrediction, mines, mineCount, hidden, gameSize)
-        if mines[bestPrediction] == 1:
-            print("Game Over!")
-            print(f"The accuracy for this game: {(guesses - 1) / guesses * 100}%")
-            printGame(mines, mineCount, hidden, gameSize, predictions, -1)
-            break
-# add detection for when game is won
+    if "," in modelsInput:
+        for model in modelsInput.split(","):
+            m = int(model.strip())
+            if m < 0 or m >= len(models):
+                raise ValueError
+            modelsToBench[m] = {}
+            modelsToBench[m]["totalGuesses"] = 0
+            modelsToBench[m]["correctGuesses"] = 0
+            modelsToBench[m]["gamesPlayed"] = 0
+            modelsToBench[m]["gamesWon"] = 0
+        print(modelsToBench)
+    elif int(modelsInput) == -1:
+        for i in range(len(models)):
+            modelsToBench[i] = {}
+            modelsToBench[i]["totalGuesses"] = 0
+            modelsToBench[i]["correctGuesses"] = 0
+            modelsToBench[i]["gamesPlayed"] = 0
+            modelsToBench[i]["gamesWon"] = 0
+    else:
+        m = int(modelsInput.strip())
+        if m < 0 or m >= len(models):
+            raise ValueError
+        modelsToBench[m] = {}
+        modelsToBench[m]["totalGuesses"] = 0
+        modelsToBench[m]["correctGuesses"] = 0
+        modelsToBench[m]["gamesPlayed"] = 0
+        modelsToBench[m]["gamesWon"] = 0
+except ValueError:
+    print("Please enter a valid input.")
+    exit(-1)
+
+try:
+    gameCount = int(input("Select many games each model will play: "))
+    if gameCount <= 0:
+        raise ValueError
+except ValueError:
+    print("Please enter a valid positive integer.")
+    exit(-1)
+
+for m in modelsToBench.keys():
+    # Initialize model
+    model = MinesweeperModel().load(
+        torch.load(f"models/{models[m]}", map_location=device), device
+    )
+    print(f"\nNow benchmarking model: {models[m]}")
+    for g in range(gameCount):
+        # Initialize game
+        gameSize = random.randint(5, 30)
+        print(f"Starting new {gameSize}x{gameSize} game ({g}/{gameCount})")
+        mines, mineCount, hidden = setupGame(gameSize)
+        # Choose random cell to select that isnt a mine
+        r = -1
+        while r == -1 or mines[r] == 1:
+            r = random.randint(0, gameSize**2 - 1)
+        hidden = updateHidden(r, mines, mineCount, hidden, gameSize)
+        # Game loop
+        guesses = 0
+        modelsToBench[m]["gamesPlayed"] += 1
+        while True:
+            predictions = {-1: 0.0}
+            bestPrediction = -1
+            gDensity = getGlobalDensity(mines, hidden)
+            if int(gDensity) == 1 or gDensity == -1:
+                modelsToBench[m]["gamesWon"] += 1
+                print("Game Won!")
+                print(
+                    f"Total game win rate: {modelsToBench[m]['gamesWon'] / modelsToBench[m]['gamesPlayed'] * 100}%"
+                )
+                printGame(mines, mineCount, hidden, gameSize, predictions, -1)
+                break
+            for i in range(gameSize**2):
+                grid = getGrid(i, mineCount, hidden, gameSize)
+                validGrid = False
+                for g in grid:
+                    if g >= 0:
+                        validGrid = True
+                        break
+                if hidden[i] == 1 and validGrid:
+                    p = predictCell(model, grid, gDensity, device)
+                    predictions[i] = p
+                    if p > predictions[bestPrediction]:
+                        bestPrediction = i
+            if bestPrediction == -1:
+                for h in range(gameSize**2):
+                    if hidden[h] == 1:
+                        bestPrediction = h
+                        break
+            guesses += 1
+            modelsToBench[m]["totalGuesses"] += 1
+            print(f"Current game state (guess {guesses}):")
+            print(
+                f"Selecting Cell ({bestPrediction % gameSize}, {bestPrediction // gameSize}) with a prediction score of {predictions[bestPrediction]}"
+            )
+            printGame(mines, mineCount, hidden, gameSize, predictions, bestPrediction)
+            hidden = updateHidden(bestPrediction, mines, mineCount, hidden, gameSize)
+            if mines[bestPrediction] == 1:
+                print("Game Over!")
+                print(f"The accuracy for this game: {(guesses - 1) / guesses * 100}%")
+                printGame(mines, mineCount, hidden, gameSize, predictions, -1)
+                break
+            modelsToBench[m]["correctGuesses"] += 1
+
+print("\nModel Statistics:")
+for m in modelsToBench.keys():
+    print(f"{models[m]}:")
+    for k in modelsToBench[m].keys():
+        print(f"{k}: {modelsToBench[m][k]}")
+    print()
+
+print("Updating the database")
+for m in modelsToBench.keys():
+    updateModelStats(
+        models[m],
+        modelsToBench[m]["gamesPlayed"],
+        modelsToBench[m]["gamesWon"],
+        modelsToBench[m]["totalGuesses"],
+        modelsToBench[m]["correctGuesses"],
+    )

@@ -294,9 +294,12 @@ class App(tk.Tk):
         self.models    = load_models()
         self.model_idx = 0
 
-        # Per-game guess tracking.
+        #per-game guess tracking
         self._total_guesses   = 0
         self._correct_guesses = 0
+
+        self._autoplay = False #check if autoplay is running
+        self._autoplay_after = None
 
         self._build_top()
         self._build_model_panel()
@@ -318,6 +321,9 @@ class App(tk.Tk):
                   command=self.new_game).pack(side=tk.RIGHT, padx=6)
         tk.Checkbutton(top, text="Show AI", variable=self.show_conf,
                        command=self._redraw).pack(side=tk.RIGHT, padx=4)
+
+        self.autoplay_btn = tk.Button(top, text="▶ Autoplay", command=self._toggle_autoplay)
+        self.autoplay_btn.pack(side=tk.RIGHT, padx=4)
 
     #slider to pick between the models
     def _build_model_panel(self):
@@ -361,6 +367,10 @@ class App(tk.Tk):
 
     #game flow
     def new_game(self):
+        # cancel any pending autoplay step before resetting
+        if self._autoplay_after is not None:
+            self.after_cancel(self._autoplay_after)
+            self._autoplay_after = None
         if self.grid_frame is not None:
             self.grid_frame.destroy()
 
@@ -458,6 +468,118 @@ class App(tk.Tk):
     def _update_label(self):
         self.mine_lbl.config(
             text=f"Mines: {self.game.n_mines - self.game.flags_placed()}")
+
+    #autoplay code
+
+    def _toggle_autoplay(self):
+        self._autoplay = not self._autoplay
+        if self._autoplay:
+            self.autoplay_btn.config(text="Stop")
+            #start a fresh game and begin stepping
+            self.new_game()
+            self._autoplay_step()
+        else:
+            self.autoplay_btn.config(text="▶ Autoplay")
+            if self._autoplay_after is not None:
+                self.after_cancel(self._autoplay_after)
+                self._autoplay_after = None
+
+    def _autoplay_step(self):
+        if not self._autoplay:
+            return
+
+        g = self.game
+
+        #if game is already over, save stats and restart
+        if g.over:
+            self._end()
+            if self._autoplay:
+                self.new_game()
+                self._autoplay_after = self.after(300, self._autoplay_step)
+            return
+
+        #on the very first move, click the center cell to open things up
+        if not g.started:
+            cr, cc = g.rows // 2, g.cols // 2
+            g.reveal(cr, cc)
+            self._run_inference_and_redraw()
+            self._autoplay_after = self.after(50, self._autoplay_step)
+            return
+
+        #run inference to get confidence grid
+        if not self.models:
+            return
+        _, params  = self.models[self.model_idx]
+        conf_grid  = compute_confidence_grid(g, params)
+        self.conf_grid = conf_grid
+        self._redraw()
+
+        #pick the unrevealed, unflagged cell adjacent to a revealed tile
+        #with the highest P(safe) score
+        best_r, best_c, best_p = None, None, -1.0
+        for r in range(g.rows):
+            for c in range(g.cols):
+                if conf_grid is not None and conf_grid[r][c] is not None:
+                    if conf_grid[r][c] > best_p:
+                        best_p = conf_grid[r][c]
+                        best_r, best_c = r, c
+
+        if best_r is None:
+            #no adjacent cells scored — pick a random unrevealed cell
+            candidates = [
+                (r, c) for r in range(g.rows) for c in range(g.cols)
+                if not g.shown[r][c] and not g.flagged[r][c]
+            ]
+            if not candidates:
+                self._autoplay_after = self.after(50, self._autoplay_step)
+                return
+            best_r, best_c = random.choice(candidates)
+            #count random fallback as a guess
+            self._total_guesses += 1
+            if not g.mines[best_r][best_c]:
+                self._correct_guesses += 1
+        else:
+            #count as a guess only when there is no revealed neighbor
+            if not has_revealed_neighbor(g, best_r, best_c):
+                self._total_guesses += 1
+                if not g.mines[best_r][best_c]:
+                    self._correct_guesses += 1
+
+        g.reveal(best_r, best_c)
+        self._run_inference_and_redraw()
+
+        if g.over:
+            self._end_autoplay()
+            return
+
+        self._autoplay_after = self.after(50, self._autoplay_step)
+
+    #same as _end but skips the message and just restarts
+    def _end_autoplay(self):
+        g = self.game
+
+        #reveal all mines for display
+        for r in range(g.rows):
+            for c in range(g.cols):
+                if g.mines[r][c]:
+                    g.shown[r][c] = True
+        self.conf_grid = None
+        self._redraw()
+
+        #save stats using whichever model is currently active
+        if self.models:
+            model_name = self.models[self.model_idx][0]
+            save_game_stats(model_name, won=g.won,
+                            total_guesses=self._total_guesses,
+                            correct_guesses=self._correct_guesses)
+
+        # pause briefly so you can see the outcome, then restart
+        self._autoplay_after = self.after(600, self._autoplay_restart)
+
+    def _autoplay_restart(self):
+        if self._autoplay:
+            self.new_game()
+            self._autoplay_after = self.after(300, self._autoplay_step)
 
     def _end(self):
         g = self.game

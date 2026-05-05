@@ -17,7 +17,7 @@ if not all(
     exit(1)
 
 
-def createMinesweeperDataset(limit):
+def fetchMinesweeperDataset(limit):
     # Load the SQL data and return the grid features, density, and targets
     schema = os.getenv("DB_SCHEMA")
     success, error = login.login(
@@ -30,9 +30,17 @@ def createMinesweeperDataset(limit):
     if db is None:
         raise Exception("Database connection is None!")
     try:
-        query = f"SELECT * FROM {schema}.minesweeper_dataset;"
+        terminator = ";"
         if limit > 0:
-            query = f"SELECT * FROM {schema}.minesweeper_dataset LIMIT {limit};"
+            terminator = f" LIMIT {limit};"  # f" TABLESAMPLE ({limit} ROWS);"
+        # query = f"SELECT * FROM {schema}.minesweeper_dataset{terminator}"
+        query = f"""
+        SELECT * FROM (
+            SELECT * FROM {schema}.minesweeper_dataset TABLESAMPLE bernoulli(100) WHERE safe = 0
+            UNION ALL
+            SELECT * FROM {schema}.minesweeper_dataset TABLESAMPLE bernoulli(100) WHERE safe = 1
+        ) combined
+        ORDER BY random(){terminator}"""
         with db.cursor() as c:
             c.execute(query)
             rows = c.fetchall()
@@ -143,7 +151,7 @@ def trainModels():
         return
 
     print("Loading full dataset from SQL table")
-    gridFeatures, globalDensity, targets = createMinesweeperDataset(limit)
+    gridFeatures, globalDensity, targets = fetchMinesweeperDataset(limit)
     totalRows = len(gridFeatures)
 
     os.makedirs("models", exist_ok=True)

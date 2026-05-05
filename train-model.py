@@ -37,6 +37,7 @@ def createMinesweeperDataset(limit):
             c.execute(query)
             rows = c.fetchall()
             column_names = [desc[0] for desc in c.description]
+            
 
         # Build numpy arrays from the fetched rows with explicit type conversion
         grid_features_list = []

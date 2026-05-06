@@ -35,6 +35,49 @@ def _ensure_db():
     _DB_CONNECTED = True
     return True
 
+#get the statistics from the db
+def fetch_model_stats():
+    if not _ensure_db():
+        return []
+    schema = os.getenv("DB_SCHEMA")
+    db = login.db()
+    if db is None:
+        return []
+    query = f"""
+        WITH stats AS (
+            SELECT
+                ms.model_name,
+                ms.games_played,
+                ms.games_won,
+                ms.total_guesses,
+                ms.correct_guesses,
+                (ms.games_won::NUMERIC / ms.games_played * 100) AS win_rate_pct,
+                (ms.correct_guesses::NUMERIC / ms.total_guesses * 100) AS guess_accuracy_pct
+            FROM {schema}.model_statistics ms
+            JOIN {schema}.models m USING (model_name)
+        ),
+        ranked AS (
+            SELECT *,
+                   RANK() OVER (ORDER BY win_rate_pct DESC) AS win_rank,
+                   RANK() OVER (ORDER BY guess_accuracy_pct DESC) AS guess_rank
+            FROM stats
+        )
+        SELECT model_name,
+               win_rate_pct, guess_accuracy_pct,
+               win_rank, guess_rank,
+               (win_rank + guess_rank) AS combined_rank_score
+        FROM ranked
+        ORDER BY combined_rank_score;
+    """
+    try:
+        with db.cursor() as c:
+            c.execute(query)
+            rows = c.fetchall()
+            cols = [desc[0] for desc in c.description]
+        return [dict(zip(cols, row)) for row in rows]
+    except Exception as e:
+        return []
+
 #insert a new row in model_stats with the values from the game
 def save_game_stats(model_name, won, total_guesses, correct_guesses):
     if not _ensure_db():
@@ -304,8 +347,11 @@ class App(tk.Tk):
 
         self._build_top()
         self._build_model_panel()
+        self._left_frame = tk.Frame(self)
+        self._left_frame.pack(side=tk.LEFT, anchor="n")
         self.bind("<F2>", lambda _: self.new_game())
         self.new_game()
+        self._build_stats_panel()
 
     #ui stuff
     def _build_top(self):
@@ -372,13 +418,7 @@ class App(tk.Tk):
         if self._autoplay_after is not None:
             self.after_cancel(self._autoplay_after)
             self._autoplay_after = None
-        if self.grid_frame is not None:
-            self.grid_frame.destroy()
 
-        self.grid_frame = tk.Frame(self, bd=2, relief=tk.SUNKEN)
-        self.grid_frame.pack(padx=6, pady=6)
-
-        self.btns      = []
         self.conf_grid = None
         self._total_guesses   = 0
         self._correct_guesses = 0
@@ -386,22 +426,36 @@ class App(tk.Tk):
         rows, cols, mines = PRESETS[self.preset.get()]
         self.game = Game(rows, cols, mines)
 
-        for r in range(rows):
-            row_btns = []
-            for c in range(cols):
-                b = tk.Label(
-                    self.grid_frame,
-                    width=2, height=1,
-                    font=("Courier", 11, "bold"),
-                    relief=tk.RAISED, bd=2,
-                    bg=CELL_BG, text="",
-                )
-                b.grid(row=r, column=c, padx=0, pady=0)
-                b.bind("<Button-1>", lambda e, r=r, c=c: self._left(r, c))
-                b.bind("<Button-2>", lambda e, r=r, c=c: self._right(r, c))
-                b.bind("<Button-3>", lambda e, r=r, c=c: self._right(r, c))
-                row_btns.append(b)
-            self.btns.append(row_btns)
+        # only rebuild the widget grid if the board size changed
+        if (self.grid_frame is None
+                or len(self.btns) != rows
+                or (self.btns and len(self.btns[0]) != cols)):
+            if self.grid_frame is not None:
+                self.grid_frame.destroy()
+            self.grid_frame = tk.Frame(self._left_frame, bd=2, relief=tk.SUNKEN)
+            self.grid_frame.pack(padx=6, pady=6)
+            self.btns = []
+            for r in range(rows):
+                row_btns = []
+                for c in range(cols):
+                    b = tk.Label(
+                        self.grid_frame,
+                        width=2, height=1,
+                        font=("Courier", 11, "bold"),
+                        relief=tk.RAISED, bd=2,
+                        bg=CELL_BG, text="",
+                    )
+                    b.grid(row=r, column=c, padx=0, pady=0)
+                    b.bind("<Button-1>", lambda e, r=r, c=c: self._left(r, c))
+                    b.bind("<Button-2>", lambda e, r=r, c=c: self._right(r, c))
+                    b.bind("<Button-3>", lambda e, r=r, c=c: self._right(r, c))
+                    row_btns.append(b)
+                self.btns.append(row_btns)
+        else:
+            for r in range(rows):
+                for c in range(cols):
+                    self.btns[r][c].config(text="", bg=CELL_BG,
+                                        fg="black", relief=tk.RAISED)
 
         self._update_label()
 
@@ -579,6 +633,54 @@ class App(tk.Tk):
         else:
             messagebox.showinfo("Minesweeper", "BOOM!")
 
+    def _build_stats_panel(self):
+        self._stats_canvas = tk.Canvas(self, width=340, bg="#1E1E1E")
+        self._stats_canvas.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 6), pady=6)
+        self._refresh_stats()
+
+    def _refresh_stats(self):
+        canvas = self._stats_canvas
+        canvas.delete("all")
+
+        rows = fetch_model_stats()
+
+        #make names more readable
+        names = [r["model_name"].replace(".pth", "").replace("model-", "") for r in rows]
+        win_rates = [float(r["win_rate_pct"]) for r in rows]
+        guess_rates = [float(r["guess_accuracy_pct"]) for r in rows]
+        combined = [int(r["combined_rank_score"]) for r in rows]
+        max_score = max(combined)
+
+        #consts for styling
+        BAR_H = 14 #height of each bar
+        BAR_W = 140 #max bar width
+        ROW_H = 34 #vertical space per model
+        NAME_X = 8 #x position of the model name label
+        BAR_X = 150 #x position where bars start
+        START_Y = 30 #y position of the first row
+
+        canvas.create_text(NAME_X, 10, anchor="w", text="Model Statistics (live)", fill="white", font=("Courier", 9, "bold"))
+
+        for i in range(len(rows)):
+            color = "#FFFFFF"
+
+            top_y = START_Y + i * ROW_H
+            bot_y = top_y + BAR_H + 2 #y position of the second bar
+
+            label = names[i]
+            canvas.create_text(NAME_X, top_y + BAR_H // 2, anchor="w", text=label, fill="#CCCCCC", font=("Courier", 7))
+
+            #win rate bar
+            canvas.create_rectangle(BAR_X, top_y, BAR_X + BAR_W, top_y + BAR_H, fill="#333", outline="")
+            canvas.create_rectangle(BAR_X, top_y, BAR_X + int(win_rates[i] / 100 * BAR_W), top_y + BAR_H, fill=color, outline="")
+            canvas.create_text(BAR_X + BAR_W + 2, top_y + BAR_H // 2, anchor="w", text=f"W {win_rates[i]:.1f}%", fill="white", font=("Courier", 7))
+
+            #guess accuracy bar
+            canvas.create_rectangle(BAR_X, bot_y, BAR_X + BAR_W, bot_y + BAR_H, fill="#333", outline="")
+            canvas.create_rectangle(BAR_X, bot_y, BAR_X + int(guess_rates[i] / 100 * BAR_W), bot_y + BAR_H, fill=color, outline="")
+            canvas.create_text(BAR_X + BAR_W + 2, bot_y + BAR_H // 2, anchor="w", text=f"G {guess_rates[i]:.1f}%", fill="white", font=("Courier", 7))
+
+        self.after(5000, self._refresh_stats)
 
 if __name__ == "__main__":
     App().mainloop()

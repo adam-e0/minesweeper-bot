@@ -326,7 +326,7 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Minesweeper")
-        self.resizable(False, False)
+        # self.resizable(False, False)
 
         self.preset     = tk.StringVar(value="Intermediate")
         self.btns       = []
